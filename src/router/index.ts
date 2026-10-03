@@ -11,6 +11,7 @@ const router = createRouter({
         { path: '', name: 'dashboard', component: () => import('@/pages/DashboardPage.vue') },
         { path: 'runs', name: 'runs', component: () => import('@/pages/RunsPage.vue') },
         { path: 'runs/:id', name: 'run-detail', component: () => import('@/pages/RunDetailPage.vue') },
+        { path: 'batches/:id', name: 'batch-detail', component: () => import('@/pages/BatchReviewPage.vue') },
         { path: 'approvals', name: 'approvals', component: () => import('@/pages/ApprovalsPage.vue') },
         { path: 'baselines', name: 'baselines', component: () => import('@/pages/BaselinesPage.vue') },
         { path: 'rules', name: 'rules', component: () => import('@/pages/RulesPage.vue') },

@@ -9,6 +9,7 @@ const statusMap: Record<RunStatus, { color: string; label: string }> = {
   approved: { color: 'green', label: '已批准' },
   rejected: { color: 'red', label: '已驳回' },
   merged: { color: 'arcoblue', label: '已合并' },
+  archived: { color: 'graypurple', label: '已归档分片' },
 }
 
 const value = computed(() => statusMap[props.status])

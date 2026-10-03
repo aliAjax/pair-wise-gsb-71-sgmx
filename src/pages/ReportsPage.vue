@@ -2,12 +2,23 @@
 import { computed, ref } from 'vue'
 import { Message } from '@arco-design/web-vue'
 import { useQuery } from '@tanstack/vue-query'
-import { getBaselines, getRuns } from '@/api/http'
+import { getBaselines, getBatches, getRuns } from '@/api/http'
 import StatusTag from '@/components/StatusTag.vue'
 
 const dateRange = ref('last-7-days')
 const { data: runs } = useQuery({ queryKey: ['runs', 'reports'], queryFn: () => getRuns() })
 const { data: baselines } = useQuery({ queryKey: ['baselines', 'reports'], queryFn: () => getBaselines() })
+const { data: batches } = useQuery({ queryKey: ['batches', 'reports'], queryFn: () => getBatches() })
+
+const batchOfRun = (runId: string) => {
+  for (const batch of batches.value ?? []) {
+    const item = batch.items.find(
+      (candidate) => candidate.primaryRunId === runId || candidate.fragmentRunIds.includes(runId),
+    )
+    if (item) return { batch, item }
+  }
+  return undefined
+}
 
 const summary = computed(() => ({
   total: runs.value?.length ?? 0,
@@ -20,19 +31,24 @@ const escapeCsv = (value: string | number) => `"${String(value).replace(/"/g, '"
 
 const exportCsv = () => {
   const rows = [
-    ['运行ID', '页面', '设备', '主题', '构建', '状态', '差异率', '差异区域', '审批人', '审批原因'],
-    ...(runs.value ?? []).map((run) => [
-      run.id,
-      run.page,
-      run.device,
-      run.theme,
-      run.build,
-      run.status,
-      run.mismatchRate.toFixed(2),
-      run.regions.length,
-      run.review?.reviewer ?? '',
-      run.review?.reason ?? '',
-    ]),
+    ['运行ID', '所属批次', '页面', '设备', '主题', '构建', '状态', '差异率', '差异区域', '归档分片数', '审批人', '审批原因'],
+    ...(runs.value ?? []).map((run) => {
+      const related = batchOfRun(run.id)
+      return [
+        run.id,
+        related?.batch.name ?? '',
+        run.page,
+        run.device,
+        run.theme,
+        run.build,
+        run.status,
+        run.mismatchRate.toFixed(2),
+        run.regions.length,
+        related?.item.archivedFragments.length ?? 0,
+        run.review?.reviewer ?? '',
+        run.review?.reason ?? '',
+      ]
+    }),
   ]
   const csv = `\uFEFF${rows.map((row) => row.map(escapeCsv).join(',')).join('\n')}`
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))

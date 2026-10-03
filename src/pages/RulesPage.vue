@@ -88,6 +88,7 @@ const projectName = (id: string) =>
 
   <a-alert type="info" style="margin-bottom: 16px">
     规则不会自动批准整张截图；启用后仅在差异报告中折叠匹配区域，高风险区域仍需人工判定。
+    批次进入评审时会冻结规则快照：事后修改规则不会改动已确认区域和已批准页面，只可在批次内对未批准部分手动重算。
   </a-alert>
 
   <a-card class="table-panel" :bordered="false">

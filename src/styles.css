@@ -834,3 +834,50 @@ code {
     height: 590px;
   }
 }
+
+/* ─── 可续传评审批次 ─────────────────────────────────────── */
+.region-item.confirmed {
+  background: #e8ffea;
+}
+
+.region-item.confirmed:hover {
+  background: #d9f9dd;
+}
+
+.region-item:disabled {
+  cursor: not-allowed;
+}
+
+.region-item.locked:hover {
+  background: #fff;
+}
+
+.region-hint {
+  padding: 10px 16px 0;
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.fragment-card {
+  margin: 12px 16px 16px;
+}
+
+.draft-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.draft-row > span {
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.run-facts strong.approved {
+  color: #00b42a;
+}
+
+.run-facts strong.rejected {
+  color: #f53f3f;
+}

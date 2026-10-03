@@ -20,7 +20,7 @@ const { data: runs } = useQuery({
     <section class="page-intro">
       <div>
         <h2>今日视觉回归态势</h2>
-        <p>聚合运行差异、审批积压和高风险页面，优先处理阻断发布的视觉变化。</p>
+        <p>执行机分片自动归入同项目同构建批次，同页面分片只算一条工单；进入评审后规则快照固定，随时可续评。</p>
       </div>
       <router-link to="/runs">
         <a-button type="primary"><icon-upload /> 新建批量运行</a-button>

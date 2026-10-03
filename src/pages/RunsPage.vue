@@ -2,9 +2,18 @@
 import { computed, reactive, ref } from 'vue'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { Message, type FileItem } from '@arco-design/web-vue'
-import { getProjects, getRuns, importRuns, mergeRuns } from '@/api/http'
+import {
+  getBatches,
+  getProjects,
+  getRuns,
+  getRules,
+  importRuns,
+  mergeRuns,
+  toApiError,
+} from '@/api/http'
 import StatusTag from '@/components/StatusTag.vue'
 import { useReviewStore } from '@/stores/review'
+import { snapshotIsStale } from '@/utils/batch'
 
 const filters = reactive({
   projectId: '',
@@ -26,6 +35,7 @@ const uploadForm = reactive({
   build: '',
   baselineVersion: '',
   currentVersion: '',
+  executor: '',
 })
 
 const queryClient = useQueryClient()
@@ -40,26 +50,50 @@ const { data: runs, isLoading } = useQuery({
   queryKey: computed(() => ['runs', cleanFilters.value]),
   queryFn: () => getRuns(cleanFilters.value),
 })
+const { data: batches } = useQuery({ queryKey: ['batches'], queryFn: () => getBatches() })
+const { data: rules } = useQuery({ queryKey: ['rules'], queryFn: getRules })
 
 const availablePages = computed(() => [...new Set(runs.value?.map((run) => run.page) ?? [])])
 const availableDevices = computed(() => [...new Set(runs.value?.map((run) => run.device) ?? [])])
 const availableBuilds = computed(() => [...new Set(runs.value?.map((run) => run.build) ?? [])])
 
+const projectName = (id: string) =>
+  projects.value?.find((project) => project.id === id)?.name ?? id
+
+const stageMeta = (stage: 'collecting' | 'in-review' | 'completed') =>
+  ({
+    collecting: { label: '分片收集期', color: 'orange' },
+    'in-review': { label: '评审中', color: 'arcoblue' },
+    completed: { label: '评审完成', color: 'green' },
+  })[stage]
+
+const batchSummaries = computed(() =>
+  (batches.value ?? []).map((batch) => {
+    const pending = batch.items.filter((item) => item.status === 'pending').length
+    const fragments = batch.items.reduce((sum, item) => sum + item.archivedFragments.length, 0)
+    const stale = rules.value ? snapshotIsStale(batch, rules.value) : false
+    return { batch, pending, fragments, stale }
+  }),
+)
+
 const mergeMutation = useMutation({
   mutationFn: mergeRuns,
   onSuccess: async () => {
-    Message.success('运行已合并，差异区域已去重')
+    Message.success('同页面重复运行已归档为分片，区域按几何位置去重，未产生重复工单')
     reviewStore.clearSelection()
-    await queryClient.invalidateQueries({ queryKey: ['runs'] })
-    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    await invalidateData()
   },
-  onError: (error: Error) => Message.error(error.message),
+  onError: (error: unknown) => Message.error(toApiError(error).message),
 })
 
 const importMutation = useMutation({
   mutationFn: importRuns,
-  onSuccess: async (items) => {
-    Message.success(`已导入 ${items.length} 张截图并完成基线配对`)
+  onSuccess: async (result) => {
+    Message.success(
+      result.duplicated > 0
+        ? `已归档到批次，${result.duplicated} 个重复分片只入库一次，新增 ${result.runs.length - result.duplicated} 个分片`
+        : `已回传 ${result.runs.length} 个分片到批次并完成基线配对`,
+    )
     uploadVisible.value = false
     uploadFiles.value = []
     baselineFiles.value = []
@@ -71,12 +105,20 @@ const importMutation = useMutation({
       build: '',
       baselineVersion: '',
       currentVersion: '',
+      executor: '',
     })
-    await queryClient.invalidateQueries({ queryKey: ['runs'] })
-    await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    await invalidateData()
   },
-  onError: (error: Error) => Message.error(error.message),
+  onError: (error: unknown) => Message.error(toApiError(error).message),
 })
+
+const invalidateData = async () => {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ['runs'] }),
+    queryClient.invalidateQueries({ queryKey: ['batches'] }),
+    queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
+  ])
+}
 
 const resetFilters = () => {
   Object.assign(filters, {
@@ -127,11 +169,12 @@ const submitImport = async () => {
     const baselineImage = baselineFiles.value[0]?.file
       ? (await fileToDataUrl(baselineFiles.value[0])).dataUrl
       : undefined
-  importMutation.mutate({
-    ...uploadForm,
+    importMutation.mutate({
+      ...uploadForm,
       files,
       baselineImage,
-  })
+      executor: uploadForm.executor.trim() || undefined,
+    })
   } catch (error) {
     Message.error(error instanceof Error ? error.message : '截图读取失败')
   }
@@ -141,16 +184,59 @@ const submitImport = async () => {
 <template>
   <section class="page-intro compact">
     <div>
-      <h2>回归运行与批量处理</h2>
-      <p>筛选截图运行，合并同一页面的重复执行，再进入差异定位与审批。</p>
+      <h2>回归运行与可续传评审批次</h2>
+      <p>执行机分批回传自动归入同项目同一构建批次，同页面分片只归档一次；进入评审后规则快照固定，可随时续评。</p>
     </div>
     <a-space>
-      <a-button type="primary" @click="uploadVisible = true"><icon-upload /> 上传截图</a-button>
+      <a-button type="primary" @click="uploadVisible = true"><icon-upload /> 回传分片</a-button>
       <a-button :disabled="reviewStore.selectedCount < 2" :loading="mergeMutation.isPending.value" @click="mergeMutation.mutate(reviewStore.selectedRunIds)">
-        <icon-merge /> 合并 {{ reviewStore.selectedCount }} 条运行
+        <icon-merge /> 归档重复分片 {{ reviewStore.selectedCount }} 条
       </a-button>
     </a-space>
   </section>
+
+  <a-card class="table-panel" :bordered="false" style="margin-bottom: 16px">
+    <template #title>评审批次</template>
+    <template #extra><span class="muted">新分片持续归档，已批准页面不受晚到分片影响</span></template>
+    <a-table :data="batchSummaries" :pagination="{ pageSize: 4 }" row-key="batch.id" size="small">
+      <template #columns>
+        <a-table-column title="批次 / 构建" :width="280">
+          <template #cell="{ record }">
+            <div class="primary-cell">
+              <router-link :to="`/batches/${record.batch.id}`">
+                <strong>{{ record.batch.name }}</strong>
+              </router-link>
+              <span><code>{{ record.batch.build }}</code> · {{ projectName(record.batch.projectId) }}</span>
+            </div>
+          </template>
+        </a-table-column>
+        <a-table-column title="阶段" :width="150">
+          <template #cell="{ record }">
+            <a-space size="small">
+              <a-tag :color="stageMeta(record.batch.stage).color">{{ stageMeta(record.batch.stage).label }}</a-tag>
+              <a-tag v-if="record.stale" color="red">规则已变化</a-tag>
+            </a-space>
+          </template>
+        </a-table-column>
+        <a-table-column title="页面条目" :width="110">
+          <template #cell="{ record }">{{ record.batch.items.length }} 个 · {{ record.pending }} 待评</template>
+        </a-table-column>
+        <a-table-column title="归档分片" :width="110">
+          <template #cell="{ record }">{{ record.fragments }} 个</template>
+        </a-table-column>
+        <a-table-column title="版本" :width="90">
+          <template #cell="{ record }">v{{ record.batch.version }}</template>
+        </a-table-column>
+        <a-table-column title="操作" :width="120">
+          <template #cell="{ record }">
+            <router-link :to="`/batches/${record.batch.id}`">
+              {{ record.batch.stage === 'collecting' ? '查看收集' : '续上评审' }}
+            </router-link>
+          </template>
+        </a-table-column>
+      </template>
+    </a-table>
+  </a-card>
 
   <a-card class="filter-panel" :bordered="false">
     <a-grid :cols="{ xs: 1, sm: 2, md: 3, xl: 6 }" :col-gap="12" :row-gap="12">
@@ -185,7 +271,7 @@ const submitImport = async () => {
           <a-option value="pending">待审批</a-option>
           <a-option value="approved">已批准</a-option>
           <a-option value="rejected">已驳回</a-option>
-          <a-option value="merged">已合并</a-option>
+          <a-option value="archived">已归档分片</a-option>
         </a-select>
       </a-grid-item>
     </a-grid>
@@ -194,7 +280,7 @@ const submitImport = async () => {
         <a-option v-for="build in availableBuilds" :key="build" :value="build">{{ build }}</a-option>
       </a-select>
       <a-button @click="resetFilters"><icon-refresh /> 重置条件</a-button>
-      <span class="result-count">共 {{ runs?.length ?? 0 }} 条运行</span>
+      <span class="result-count">共 {{ runs?.length ?? 0 }} 条主运行（归档分片已折叠）</span>
     </div>
   </a-card>
 
@@ -250,12 +336,15 @@ const submitImport = async () => {
 
   <a-modal
     v-model:visible="uploadVisible"
-    title="批量上传截图"
+    title="执行机分片回传"
     :ok-loading="importMutation.isPending.value"
-    ok-text="导入并配对"
+    ok-text="归档到批次并配对"
     width="720px"
     @ok="submitImport"
   >
+    <a-alert type="info" style="margin-bottom: 16px">
+      同项目、同构建、同页面/设备的重复分片按内容指纹只归档一次；已批准页面收到晚到分片也不会绕过现有基线。
+    </a-alert>
     <a-form :model="uploadForm" layout="vertical">
       <a-grid :cols="2" :col-gap="16">
         <a-grid-item>
@@ -283,14 +372,19 @@ const submitImport = async () => {
         <a-grid-item>
           <a-form-item label="主题" required>
             <a-radio-group v-model="uploadForm.theme" type="button">
-              <a-radio value="light">浅色主题</a-radio>
-              <a-radio value="dark">深色主题</a-radio>
+              <a-radio value="light">浅色</a-radio>
+              <a-radio value="dark">深色</a-radio>
             </a-radio-group>
           </a-form-item>
         </a-grid-item>
         <a-grid-item>
           <a-form-item label="构建版本" required>
             <a-input v-model="uploadForm.build" placeholder="release/6.18.0" />
+          </a-form-item>
+        </a-grid-item>
+        <a-grid-item>
+          <a-form-item label="执行机标识（可选）">
+            <a-input v-model="uploadForm.executor" placeholder="executor-shard-2" />
           </a-form-item>
         </a-grid-item>
         <a-grid-item>
@@ -312,7 +406,7 @@ const submitImport = async () => {
           accept="image/png,image/jpeg,image/webp"
           :auto-upload="false"
           :limit="20"
-          tip="支持 PNG、JPG、WebP，单次最多 20 张且总大小不超过 4MB。"
+          tip="同一批上传的文件视为执行机的多个分片；支持 PNG、JPG、WebP，总大小不超过 4MB。"
         />
       </a-form-item>
       <a-form-item label="基线图（可选）">

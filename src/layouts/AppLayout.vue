@@ -28,7 +28,10 @@ const pageTitle = computed(() => {
     '/rules': '忽略规则',
     '/reports': '结果与导出',
   }
-  return route.name === 'run-detail' ? '差异定位评审' : map[route.path] ?? '视觉基线评审台'
+  if (route.name === 'batch-detail') return '可续传评审批次'
+  if (route.name === 'run-detail') return '差异定位评审'
+  if (route.path.startsWith('/runs')) return '视觉回归运行'
+  return map[route.path] ?? '视觉基线评审台'
 })
 
 const navigate = (key: string) => {
