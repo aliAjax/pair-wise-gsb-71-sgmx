@@ -834,3 +834,162 @@ code {
     height: 590px;
   }
 }
+
+/* ---- 可续传评审批次 ---- */
+.batch-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid #e5e6eb;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.shard-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.shard-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e5e6eb;
+  background: #f7f8fa;
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.shard-tab:hover {
+  border-color: #165dff;
+  background: #f2f6ff;
+}
+
+.shard-tab.active {
+  border-color: #165dff;
+  background: #e8f3ff;
+  box-shadow: inset 0 0 0 1px #165dff;
+}
+
+.shard-tab.locked {
+  opacity: 0.75;
+}
+
+.shard-tab .shard-name {
+  font-weight: 600;
+  font-size: 12px;
+  color: #1d2129;
+}
+
+.shard-tab .shard-meta {
+  font-size: 11px;
+  color: #86909c;
+}
+
+.round-track {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.round-pill {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.round-pill.open {
+  background: #e8f3ff;
+  color: #165dff;
+  border-color: #94bfff;
+}
+
+.round-pill.approved {
+  background: #e8ffea;
+  color: #00b42a;
+  border-color: #7be188;
+}
+
+.round-pill.rejected {
+  background: #ffece8;
+  color: #f53f3f;
+  border-color: #fd9c8f;
+}
+
+.round-pill.superseded {
+  background: #f5f0ff;
+  color: #722ed1;
+  border-color: #d3adf7;
+}
+
+.region-item:disabled {
+  cursor: not-allowed;
+}
+
+.region-item.locked {
+  background: #f7f8fa;
+  border-color: #e5e6eb;
+}
+
+.region-item em {
+  font-style: normal;
+  color: #722ed1;
+}
+
+.approval-line {
+  padding: 8px 0;
+  border-bottom: 1px dashed #e5e6eb;
+}
+
+.approval-line:last-child {
+  border-bottom: none;
+}
+
+.approval-line dl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.approval-line dt {
+  font-weight: 700;
+  color: #4e5969;
+}
+
+.approval-line dd {
+  margin: 0;
+  font-size: 12px;
+  color: #86909c;
+}
+
+.approval-line p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #4e5969;
+}
+
+.fault-switch-label {
+  font-size: 12px;
+  color: #4e5969;
+  white-space: nowrap;
+}
+
+.online-dot.fault {
+  background: #f53f3f;
+  box-shadow: 0 0 0 3px rgba(245, 63, 63, 0.18);
+}
+
+code {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+}

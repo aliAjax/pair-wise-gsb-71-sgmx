@@ -49,8 +49,13 @@ const projectName = (id: string) => projects.value?.find((project) => project.id
           <a-table-column title="状态" :width="90">
             <template #cell="{ record }"><a-tag :color="record.active ? 'green' : 'gray'">{{ record.active ? '有效' : '已停用' }}</a-tag></template>
           </a-table-column>
-          <a-table-column title="操作" :width="100">
-            <template #cell="{ record }"><router-link :to="`/runs/${record.runId}`">追溯运行</router-link></template>
+          <a-table-column title="操作" :width="190">
+            <template #cell="{ record }">
+              <a-space direction="vertical" :size="2">
+                <a-tag v-if="record.batchId" color="arcoblue" size="small">批次 {{ record.batchId.slice(-6) }}<template v-if="record.round"> · R{{ record.round }}</template></a-tag>
+                <router-link :to="`/runs/${record.runId}`">追溯运行</router-link>
+              </a-space>
+            </template>
           </a-table-column>
         </template>
       </a-table>

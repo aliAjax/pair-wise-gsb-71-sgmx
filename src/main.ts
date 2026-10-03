@@ -7,6 +7,10 @@ import '@arco-design/web-vue/dist/arco.css'
 import './styles.css'
 import App from './App.vue'
 import router from './router'
+import { replayWal } from './mocks/db'
+
+// 重启恢复：上次本地存储写入失败的事务若已进入预写日志，在此重放（opId 幂等）
+replayWal()
 
 createApp(App)
   .use(createPinia())

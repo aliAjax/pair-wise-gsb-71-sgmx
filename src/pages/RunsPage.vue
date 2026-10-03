@@ -26,6 +26,8 @@ const uploadForm = reactive({
   build: '',
   baselineVersion: '',
   currentVersion: '',
+  executor: '',
+  shardBase: 0,
 })
 
 const queryClient = useQueryClient()
@@ -58,8 +60,12 @@ const mergeMutation = useMutation({
 
 const importMutation = useMutation({
   mutationFn: importRuns,
-  onSuccess: async (items) => {
-    Message.success(`已导入 ${items.length} 张截图并完成基线配对`)
+  onSuccess: async (result) => {
+    if (result.duplicated > 0) {
+      Message.info(`已归档 ${result.runs.length} 个分片，其中 ${result.duplicated} 个重复分片只归档一次，已并入批次 ${result.batchId.slice(-6)}`)
+    } else {
+      Message.success(`已归档 ${result.runs.length} 个执行机分片，同页面同构建自动归入同一批次`)
+    }
     uploadVisible.value = false
     uploadFiles.value = []
     baselineFiles.value = []
@@ -71,9 +77,12 @@ const importMutation = useMutation({
       build: '',
       baselineVersion: '',
       currentVersion: '',
+      executor: '',
+      shardBase: 0,
     })
     await queryClient.invalidateQueries({ queryKey: ['runs'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    await queryClient.invalidateQueries({ queryKey: ['batch'] })
   },
   onError: (error: Error) => Message.error(error.message),
 })
@@ -238,6 +247,15 @@ const submitImport = async () => {
         <a-table-column title="差异区域" :width="100">
           <template #cell="{ record }">{{ record.regions.length }} 处</template>
         </a-table-column>
+        <a-table-column title="回传分片" :width="150">
+          <template #cell="{ record }">
+            <a-tag v-if="record.duplicated" color="gray" size="small">重复已去重</a-tag>
+            <template v-else>
+              <div class="sub-text">{{ record.executor ?? '执行机' }} #{{ record.shardIndex ?? 0 }}</div>
+              <a-tag v-if="record.batchId" color="arcoblue" size="small">批次 {{ record.batchId.slice(-6) }}</a-tag>
+            </template>
+          </template>
+        </a-table-column>
         <a-table-column title="状态" :width="100">
           <template #cell="{ record }"><StatusTag :status="record.status" /></template>
         </a-table-column>
@@ -303,7 +321,20 @@ const submitImport = async () => {
             <a-input v-model="uploadForm.currentVersion" placeholder="留空则使用构建版本" />
           </a-form-item>
         </a-grid-item>
+        <a-grid-item>
+          <a-form-item label="执行机标识">
+            <a-input v-model="uploadForm.executor" placeholder="如 runner-07，留空随机生成" />
+          </a-form-item>
+        </a-grid-item>
+        <a-grid-item>
+          <a-form-item label="分片起始序号">
+            <a-input-number v-model="uploadForm.shardBase" :min="0" :max="999" style="width: 100%" />
+          </a-form-item>
+        </a-grid-item>
       </a-grid>
+      <a-alert type="info" style="margin-bottom: 12px">
+        多台执行机分批回传时，相同「项目 + 构建 + 页面 + 设备 + 主题 + 分片序号」的重复分片只归档一次；晚到分片会自动续入已有批次。
+      </a-alert>
       <a-form-item label="截图文件" required>
         <a-upload
           v-model:file-list="uploadFiles"

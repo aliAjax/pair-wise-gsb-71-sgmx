@@ -1,12 +1,33 @@
-import type { Baseline, DifferenceRegion, IgnoreRule, Project, ScreenshotRun } from '@/types'
+import type {
+  Baseline,
+  BatchDraft,
+  DifferenceRegion,
+  IgnoreRule,
+  Project,
+  ReviewBatch,
+  ScreenshotRun,
+} from '@/types'
 
 const STORAGE_KEY = 'visual-regression-platform-v1'
+const WAL_KEY = 'visual-regression-platform-wal-v1'
+const FAULT_KEY = 'visual-regression-platform-fault-v1'
+const RECOVERY_KEY = 'visual-regression-platform-recovery-v1'
 
-interface Database {
+export interface Database {
+  version: number
   projects: Project[]
   runs: ScreenshotRun[]
   baselines: Baseline[]
   rules: IgnoreRule[]
+  batches: ReviewBatch[]
+  drafts: Record<string, BatchDraft>
+}
+
+export class StorageWriteError extends Error {
+  constructor(public readonly opId: string) {
+    super('本地存储写入失败，已写入预写日志，重启后可恢复')
+    this.name = 'StorageWriteError'
+  }
 }
 
 const projects: Project[] = [
@@ -14,6 +35,12 @@ const projects: Project[] = [
   { id: 'p-console', name: '云资源控制台', code: 'CLOUD', owner: '周航', pageCount: 67 },
   { id: 'p-growth', name: '增长运营平台', code: 'GROWTH', owner: '许薇', pageCount: 31 },
 ]
+
+const REGION_SELECTORS: Record<string, string> = {
+  r1: '[data-test="layout-stage"]',
+  r2: '[data-test="palette-token"]',
+  r3: '[data-visual-ignore="relative-time"]',
+}
 
 const makeRegions = (prefix: string, intensity: number): DifferenceRegion[] => [
   {
@@ -26,6 +53,7 @@ const makeRegions = (prefix: string, intensity: number): DifferenceRegion[] => [
     pixels: Math.round(1840 * intensity),
     kind: 'layout',
     ignored: false,
+    selector: REGION_SELECTORS.r1,
   },
   {
     id: `${prefix}-r2`,
@@ -37,6 +65,7 @@ const makeRegions = (prefix: string, intensity: number): DifferenceRegion[] => [
     pixels: Math.round(720 * intensity),
     kind: 'color',
     ignored: false,
+    selector: REGION_SELECTORS.r2,
   },
   {
     id: `${prefix}-r3`,
@@ -49,6 +78,7 @@ const makeRegions = (prefix: string, intensity: number): DifferenceRegion[] => [
     kind: 'environment',
     ignored: true,
     ruleId: 'rule-time',
+    selector: REGION_SELECTORS.r3,
   },
 ]
 
@@ -261,24 +291,154 @@ const rules: IgnoreRule[] = [
   },
 ]
 
-const seed = (): Database => ({ projects, runs, baselines, rules })
+const seed = (): Database => ({
+  version: 2,
+  projects,
+  runs,
+  baselines,
+  rules,
+  batches: [],
+  drafts: {},
+})
 
-export const readDb = (): Database => {
-  const raw = localStorage.getItem(STORAGE_KEY)
-  if (!raw) {
-    const initial = seed()
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial))
-    return initial
-  }
+// ---- 故障注入开关（供演示/测试使用） ----
+export const isFaultEnabled = (): boolean => localStorage.getItem(FAULT_KEY) === 'on'
+export const setFaultEnabled = (on: boolean): void => {
+  if (on) localStorage.setItem(FAULT_KEY, 'on')
+  else localStorage.removeItem(FAULT_KEY)
+}
+
+// ---- 预写日志：主库写入失败时仍可在重启后恢复，opId 幂等 ----
+export interface WalEntry {
+  opId: string
+  at: string
+  // 完整的提交后数据库快照 + 描述，重放时以 opId 去重
+  db: Database
+  note: string
+}
+
+const readWal = (): WalEntry[] => {
+  const raw = localStorage.getItem(WAL_KEY)
+  if (!raw) return []
   try {
-    return JSON.parse(raw) as Database
+    const parsed = JSON.parse(raw) as WalEntry[]
+    return Array.isArray(parsed) ? parsed : []
   } catch {
-    const initial = seed()
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(initial))
-    return initial
+    return []
   }
 }
 
+const writeWal = (entries: WalEntry[]): void => {
+  // WAL 使用独立键，故障只注入主库写入
+  localStorage.setItem(WAL_KEY, JSON.stringify(entries.slice(-5)))
+}
+
+export const getRecoveryInfo = () => {
+  const raw = localStorage.getItem(RECOVERY_KEY)
+  return raw ? (JSON.parse(raw) as WalEntry & { recoveredAt: string }) : null
+}
+
+const clearRecoveryInfo = (): void => localStorage.removeItem(RECOVERY_KEY)
+
+export const migrateDb = (raw: unknown): Database => {
+  if (!raw || typeof raw !== 'object') return seed()
+  const db = raw as Partial<Database>
+  const base = seed()
+  const migrated: Database = {
+    version: 2,
+    projects: Array.isArray(db.projects) && db.projects.length ? db.projects : base.projects,
+    runs: Array.isArray(db.runs) ? db.runs : base.runs,
+    baselines: Array.isArray(db.baselines) ? db.baselines : base.baselines,
+    rules: Array.isArray(db.rules) ? db.rules : base.rules,
+    // v1 数据无批次概念：不预建批次，旧运行首次打开时补成单运行批次
+    batches: Array.isArray(db.batches) ? db.batches : [],
+    drafts: db.drafts && typeof db.drafts === 'object' ? db.drafts : {},
+  }
+  return migrated
+}
+
+let cachedDb: Database | null = null
+
+export const readDb = (): Database => {
+  if (cachedDb) return cachedDb
+  const raw = localStorage.getItem(STORAGE_KEY)
+  if (!raw) {
+    const initial = seed()
+    attemptPrime(initial)
+    cachedDb = initial
+    return initial
+  }
+  try {
+    cachedDb = migrateDb(JSON.parse(raw))
+  } catch {
+    const initial = seed()
+    attemptPrime(initial)
+    cachedDb = initial
+  }
+  return cachedDb
+}
+
+const attemptPrime = (db: Database): void => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
+  } catch {
+    // 首次播种失败也允许内存态运行
+  }
+}
+
+/**
+ * 提交事务：先写 WAL，再写主库。
+ * - 主库写入抛错（故障注入或配额超限）时保留 WAL，调用方据此返回失败，
+ *   内存快照不落盘，重启后由 replayWal 恢复，且 opId 去重不产生重复区域/审批。
+ */
+export const commitDb = (db: Database, opId: string, note: string): void => {
+  const entries = readWal().filter((entry) => entry.opId !== opId)
+  const entry: WalEntry = { opId, at: new Date().toISOString(), db, note }
+  writeWal([...entries, entry])
+  if (isFaultEnabled()) {
+    throw new StorageWriteError(opId)
+  }
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
+  } catch (error) {
+    throw new StorageWriteError(opId)
+  }
+  // 主库落盘成功：当前快照即最新真值，清除所有残留 WAL，避免旧快照回滚覆盖
+  writeWal([])
+  cachedDb = db
+}
+
+/**
+ * 启动时重放 WAL。返回被恢复的操作（幂等）；
+ * 若当前故障开关仍开着，则保留 WAL 等待下次重启。
+ */
+export const replayWal = (): (WalEntry & { recoveredAt: string }) | null => {
+  const entries = readWal()
+  if (entries.length === 0) {
+    clearRecoveryInfo()
+    return null
+  }
+  const entry = entries[entries.length - 1]
+  if (isFaultEnabled()) return null
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(entry.db))
+    writeWal(entries.filter((item) => item.opId !== entry.opId))
+    cachedDb = entry.db
+    const info = { ...entry, recoveredAt: new Date().toISOString() }
+    localStorage.setItem(RECOVERY_KEY, JSON.stringify(info))
+    return info
+  } catch {
+    return null
+  }
+}
+
+export const consumeRecoveryInfo = (): (WalEntry & { recoveredAt: string }) | null => {
+  const info = getRecoveryInfo()
+  if (info) clearRecoveryInfo()
+  return info
+}
+
 export const writeDb = (db: Database): void => {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(db))
+  // 旧调用路径统一走事务提交（opId 由时间戳生成，兼容保留）
+  commitDb(db, `legacy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, 'legacy-write')
 }
